@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "dev": "deno run --watch index.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1",
+    "@quizpot/quizcore": "npm:@quizpot/quizcore@^0.0.9"
+  }
+}
