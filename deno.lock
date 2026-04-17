@@ -1,9 +1,9 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@std/assert@1": "1.0.19",
+    "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/internal@^1.0.12": "1.0.12",
-    "npm:@quizpot/quizcore@^0.0.6": "0.0.6"
+    "npm:@quizpot/quizcore@^0.0.9": "0.0.9"
   },
   "jsr": {
     "@std/assert@1.0.19": {
@@ -17,11 +17,16 @@
     }
   },
   "npm": {
-    "@quizpot/quizcore@0.0.6": {
-      "integrity": "sha512-N/pp9NDmK+GZR01nOSsUjU8+9JHeGZAcksc0AXbfOmjXghYUIUPN4+QgaJOcD01YVhjuAX+0Ivm98aHWmaqHdA==",
+    "@quizpot/quizcore@0.0.9": {
+      "integrity": "sha512-N+h6Fk0+tDSC/fmmZf8SJWvVHs4FupZs9i451LMI/qrkKc6Z5i8BT6X+FsLN56SY8bGoPCrbol07CxeYN7T7zg==",
       "dependencies": [
+        "uuid",
         "zod"
       ]
+    },
+    "uuid@13.0.0": {
+      "integrity": "sha512-XQegIaBTVUjSHliKqcnFqYypAd4S+WCYt5NIeRs6w/UAry7z8Y9j5ZwRRL4kzq9U3sD6v+85er9FvkEaBpji2w==",
+      "bin": true
     },
     "zod@4.3.6": {
       "integrity": "sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg=="
@@ -29,8 +34,8 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1",
-      "npm:@quizpot/quizcore@^0.0.6"
+      "jsr:@std/assert@^1.0.19",
+      "npm:@quizpot/quizcore@^0.0.9"
     ]
   }
 }
