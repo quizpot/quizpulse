@@ -21,3 +21,7 @@ export const createClient = (ws: WebSocket, id: string, code: string, role: "hos
 export const removeClient = (id: string): void => {
   wsClients.delete(id);
 }
+
+export const getClient = (id: string): WebSocketClient | undefined => {
+  return wsClients.get(id);
+}
