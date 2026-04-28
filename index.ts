@@ -503,7 +503,7 @@ const server = Bun.serve<WebSocketData>({
           );
         }
       } catch (err) {
-        console.error("[ws] Unexpected error in message handler:", err);
+        console.error("[ws] Unexpected error in message handler:\n" + err);
         try {
           ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Server error" } }));
         } catch {
