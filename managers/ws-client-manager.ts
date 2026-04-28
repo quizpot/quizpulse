@@ -14,14 +14,20 @@ if (!globalThis.wsClients) {
 
 export const createClient = (ws: WebSocket, id: string, code: string, role: "host" | "player"): WebSocketClient => {
   const client = Object.assign(ws, { id, code, role }) as WebSocketClient;
-  wsClients.set(id, client);
+  globalThis.wsClients.set(id, client);
+  console.log(`[quizpulse] ${role} client connected: ${id} - ${globalThis.wsClients.size} clients connected`);
   return client;
 }
 
 export const removeClient = (id: string): void => {
-  wsClients.delete(id);
+  globalThis.wsClients.delete(id);
+  console.log(`[quizpulse] client disconnected: ${id} - ${globalThis.wsClients.size} clients connected`);
 }
 
 export const getClient = (id: string): WebSocketClient | undefined => {
-  return wsClients.get(id);
+  return globalThis.wsClients.get(id);
+}
+
+export const getClientCount = (): number => {
+  return globalThis.wsClients.size;
 }
