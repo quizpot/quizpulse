@@ -14,7 +14,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@quizpot/quizcore": "0.0.31",
+    "@quizpot/quizcore": "0.0.40",
     "@types/pg": "^8.20.0",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.20.0"

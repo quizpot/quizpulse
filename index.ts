@@ -23,7 +23,6 @@ import {
   type TargetedEvent,
   isQuestion,
   LobbyStatus,
-  type AllServerEvents,
 } from "@quizpot/quizcore";
 import type { Server } from "bun";
 
@@ -39,7 +38,6 @@ interface WebSocketData {
   name: string;
 }
 
-/** Routes events from the LobbyManager to the actual WebSocket clients. */
 export function dispatchEvents(
   server: Server<WebSocketData>,
   lobbyCode: string,
@@ -60,33 +58,22 @@ export function dispatchEvents(
       const message = JSON.stringify(event);
 
       if (target === "all") {
-        server.publish(lobbyCode, message);
+        lobby.players.forEach((p) => getClient(p.id)?.send(message));
+        getClient(lobby.hostId)?.send(message);
       } else if (target === "host") {
-        const hostClient = getClient(lobby.hostId);
-        if (hostClient) hostClient.send(message);
+        getClient(lobby.hostId)?.send(message);
       } else if (target === "players") {
         lobby.players.forEach((p) => {
-          const client = getClient(p.id);
-          if (client) {
-            try {
-              client.send(message);
-            } catch (err) {
-              console.error(
-                `[dispatchEvents] Failed to send to player ${p.id}:`,
-                err
-              );
-            }
+          try {
+            getClient(p.id)?.send(message);
+          } catch (err) {
+            console.error(`[dispatchEvents] Failed to send to player ${p.id}:`, err);
           }
         });
       } else if (Array.isArray(target)) {
-        dispatchEvents(
-          server,
-          lobbyCode,
-          target.map((t) => ({ target: t, event }))
-        );
+        dispatchEvents(server, lobbyCode, target.map((t) => ({ target: t, event })));
       } else if (target.clientId) {
-        const client = getClient(target.clientId);
-        if (client) client.send(message);
+        getClient(target.clientId)?.send(message);
       }
     } catch (err) {
       console.error(
@@ -98,18 +85,34 @@ export function dispatchEvents(
 }
 
 /**
- * Centralized handler for LobbyManager results.
- *
- * BUG FIX 1: LobbyManager methods (start, kick, nextStep, submitAnswer) can
- * return a native `Error` object on failure.  Previously these fell through
- * to `dispatchEvents(…, result.events)` where `result.events` is undefined
- * → runtime crash.  We now normalise Error instances to
- * `{ type: "ERROR", message }` and return early.
- *
- * BUG FIX 2: Removed the `else if (lobby.status === LobbyStatus.end)` auto-
- * advance timeout that was scheduling a second `LobbyManager.delete` call
- * (and re-broadcasting LOBBY_DELETED) after the lobby already ended.
+ * Terminates a lobby: cancels timers, broadcasts LOBBY_DELETED, removes from
+ * the store.  This is intentionally a plain function that does NOT call
+ * handleLobbyResult — keeping them separate is what prevents the infinite
+ * recursion that previously occurred when end-state handling called
+ * LobbyManager.delete() → handleLobbyResult() → end-state → repeat.
  */
+function terminateLobby(
+  server: Server<WebSocketData>,
+  code: string,
+  reason: string
+) {
+  const gameTimer = gameTimers.get(code);
+  if (gameTimer) {
+    clearTimeout(gameTimer);
+    gameTimers.delete(code);
+  }
+
+  const lobby = getLobby(code);
+  if (!lobby) return;
+
+  const message = JSON.stringify({ event: "LOBBY_DELETED", payload: { reason } });
+  lobby.players.forEach((p) => getClient(p.id)?.send(message));
+  getClient(lobby.hostId)?.send(message);
+
+  deleteLobby(code);
+  console.log(`[game] Lobby ${code} terminated: ${reason}`);
+}
+
 function handleLobbyResult(
   server: Server<WebSocketData>,
   code: string,
@@ -117,7 +120,6 @@ function handleLobbyResult(
 ): { type: "ERROR"; message: string } | void {
   if (!result) return;
 
-  // Normalise native Error objects returned by LobbyManager methods.
   if (result instanceof Error) {
     return { type: "ERROR", message: result.message };
   }
@@ -130,20 +132,19 @@ function handleLobbyResult(
   if (state) {
     updateLobby(code, state);
 
-    // If the lobby just ended, cancel any pending game timer immediately.
+    // When the game reaches end status, terminate cleanly and stop processing.
+    // Do NOT call LobbyManager.delete() + handleLobbyResult() here — that
+    // pattern is what caused the "Maximum call stack size exceeded" crash
+    // because delete() also produces status:end, causing infinite re-entry.
     if (state.status === LobbyStatus.end) {
-      if (gameTimers.has(code)) {
-        clearTimeout(gameTimers.get(code));
-        gameTimers.delete(code);
-      }
-      console.log(`[game] Lobby ${code} ended`);
+      terminateLobby(server, code, "Lobby ended");
+      return;
     }
   }
 
   dispatchEvents(server, code, result.events);
 
-  // All-answered early advance: break the call stack with setTimeout to avoid
-  // unbounded recursion if setStatus itself triggers further transitions.
+  // All-answered early advance.
   const currentLobby = getLobby(code);
   if (currentLobby && currentLobby.status === LobbyStatus.answer) {
     const connectedPlayers = currentLobby.players.filter((p) => p.isConnected);
@@ -151,9 +152,7 @@ function handleLobbyResult(
       connectedPlayers.length > 0 &&
       currentLobby.currentAnswers.length >= connectedPlayers.length
     ) {
-      console.log(
-        `[game] Lobby ${code} all players answered, advancing to answers`
-      );
+      console.log(`[game] Lobby ${code} all players answered, advancing to answers`);
       setTimeout(() => {
         const freshLobby = getLobby(code);
         if (!freshLobby) return;
@@ -167,7 +166,6 @@ function handleLobbyResult(
     }
   }
 
-  // Clear any existing game timer before scheduling a new one.
   if (gameTimers.has(code)) {
     clearTimeout(gameTimers.get(code));
     gameTimers.delete(code);
@@ -175,15 +173,11 @@ function handleLobbyResult(
 
   const lobby = getLobby(code);
   if (!lobby || !lobby.quiz) return;
-
-  // Don't schedule auto-advance timers for a lobby that has already ended.
   if (lobby.status === LobbyStatus.end) return;
 
   const currentQuestion = lobby.quiz.steps[lobby.currentStep];
   if (!currentQuestion) {
-    console.warn(
-      `[game] Lobby ${code} step ${lobby.currentStep} not found in quiz`
-    );
+    console.warn(`[game] Lobby ${code} step ${lobby.currentStep} not found in quiz`);
     return;
   }
 
@@ -194,22 +188,16 @@ function handleLobbyResult(
     if (lobby.status === LobbyStatus.question) {
       timeout = (currentQuestion.data.displayTime || 5) * 1000;
       nextStatus = LobbyStatus.answer;
-      console.log(
-        `[game] Lobby ${code} question display timeout: ${timeout}ms`
-      );
+      console.log(`[game] Lobby ${code} question display timeout: ${timeout}ms`);
     } else if (lobby.status === LobbyStatus.answer) {
       timeout = (currentQuestion.data.timeLimit || 5) * 1000;
       nextStatus = LobbyStatus.answers;
-      console.log(
-        `[game] Lobby ${code} answer collection timeout: ${timeout}ms`
-      );
+      console.log(`[game] Lobby ${code} answer collection timeout: ${timeout}ms`);
     }
   }
-  // NOTE: slides have no auto-advance timeout — the host advances manually.
 
   if (timeout > 0) {
     const timer = setTimeout(() => {
-      // Always re-fetch lobby state to avoid stale closures.
       const freshLobby = getLobby(code);
       if (!freshLobby) {
         console.warn(`[game] Lobby ${code} disappeared before auto-advance`);
@@ -218,9 +206,7 @@ function handleLobbyResult(
 
       const freshQuestion = freshLobby.quiz.steps[freshLobby.currentStep];
       if (!freshQuestion) {
-        console.warn(
-          `[game] Lobby ${code} step ${freshLobby.currentStep} disappeared`
-        );
+        console.warn(`[game] Lobby ${code} step ${freshLobby.currentStep} disappeared`);
         return;
       }
 
@@ -247,7 +233,6 @@ const server = Bun.serve<WebSocketData>({
   async fetch(req, server) {
     const url = new URL(req.url);
 
-    // ── POST /create-lobby ─────────────────────────────────────────────────
     if (req.method === "POST" && url.pathname === "/create-lobby") {
       try {
         let body: any;
@@ -310,7 +295,6 @@ const server = Bun.serve<WebSocketData>({
       }
     }
 
-    // ── GET /ws (WebSocket upgrade) ────────────────────────────────────────
     if (url.pathname === "/ws") {
       const id = url.searchParams.get("id");
       const code = url.searchParams.get("code");
@@ -333,18 +317,14 @@ const server = Bun.serve<WebSocketData>({
       }
 
       if (role === "host" && lobby.hostId !== id) {
-        console.warn(
-          `[auth] Unauthorized host connection attempt for lobby ${code}`
-        );
+        console.warn(`[auth] Unauthorized host connection attempt for lobby ${code}`);
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 403,
           headers: { "Content-Type": "application/json" },
         });
       }
 
-      const upgraded = server.upgrade(req, {
-        data: { id, code, role, name },
-      });
+      const upgraded = server.upgrade(req, { data: { id, code, role, name } });
 
       return upgraded
         ? undefined
@@ -366,7 +346,6 @@ const server = Bun.serve<WebSocketData>({
     open(ws) {
       const { id, code, role, name } = ws.data;
 
-      // Kick any existing connection for this client (e.g. duplicate tab)
       const existing = getClient(id);
       if (existing) {
         console.log(`[ws] Closing duplicate connection for ${id}`);
@@ -376,7 +355,6 @@ const server = Bun.serve<WebSocketData>({
 
       if (role === "host") {
         onHostConnected(code);
-
         const timer = deletionTimers.get(code);
         if (timer) {
           clearTimeout(timer);
@@ -402,9 +380,7 @@ const server = Bun.serve<WebSocketData>({
         console.log(`[ws] Join error for ${id}: ${result.message}`);
         ws.close(4003, result.message);
       } else {
-        setTimeout(() => {
-          handleLobbyResult(server, code, result);
-        }, 300);
+        handleLobbyResult(server, code, result);
       }
     },
 
@@ -419,31 +395,18 @@ const server = Bun.serve<WebSocketData>({
           );
         } catch (parseErr) {
           console.error(`[ws] Message parse error from ${id}:`, parseErr);
-          ws.send(
-            JSON.stringify({ event: "ERROR", message: "Invalid message format" })
-          );
+          ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Invalid message format" } }));
           return;
         }
 
         if (!payload || !payload.event) {
-          console.error(
-            `[ws] Message missing event property from ${id}`
-          );
-          ws.send(
-            JSON.stringify({
-              event: "ERROR",
-              message: "Message missing event property",
-            })
-          );
+          ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Message missing event property" } }));
           return;
         }
 
         const lobby = getLobby(code);
         if (!lobby) {
-          console.error(
-            `[ws] Lobby ${code} not found during message from ${id}`
-          );
-          ws.send(JSON.stringify({ event: "ERROR", message: "Lobby not found" }));
+          ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Lobby not found" } }));
           return;
         }
 
@@ -452,19 +415,10 @@ const server = Bun.serve<WebSocketData>({
         switch (payload.event) {
           case "SUBMIT_ANSWER":
             if (!payload.payload?.submission) {
-              ws.send(
-                JSON.stringify({
-                  event: "ERROR",
-                  message: "Invalid answer submission",
-                })
-              );
+              ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Invalid answer submission" } }));
               return;
             }
-            result = LobbyManager.submitAnswer(
-              lobby,
-              id,
-              payload.payload.submission
-            );
+            result = LobbyManager.submitAnswer(lobby, id, payload.payload.submission);
             break;
 
           case "START_LOBBY":
@@ -472,17 +426,12 @@ const server = Bun.serve<WebSocketData>({
             break;
 
           case "NEXT_STEP":
-            result = LobbyManager.nextStep(lobby, id);
+            result = LobbyManager.advanceState(lobby, id);
             break;
 
           case "KICK_PLAYER":
             if (!payload.payload?.playerId) {
-              ws.send(
-                JSON.stringify({
-                  event: "ERROR",
-                  message: "Invalid kick request",
-                })
-              );
+              ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Invalid kick request" } }));
               return;
             }
             result = LobbyManager.kick(lobby, id, payload.payload.playerId);
@@ -495,12 +444,8 @@ const server = Bun.serve<WebSocketData>({
 
         const outcome = handleLobbyResult(server, code, result);
         if (outcome?.type === "ERROR") {
-          console.log(
-            `[game] Error handling ${payload.event} from ${id}: ${outcome.message}`
-          );
-          ws.send(
-            JSON.stringify({ event: "SERVER_ERROR", payload: { message: outcome.message } })
-          );
+          console.log(`[game] Error handling ${payload.event} from ${id}: ${outcome.message}`);
+          ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: outcome.message } }));
         }
       } catch (err) {
         console.error("[ws] Unexpected error in message handler:\n" + err);
@@ -527,9 +472,7 @@ const server = Bun.serve<WebSocketData>({
             const currentLobby = getLobby(code);
             if (currentLobby && !currentLobby.hostConnected) {
               console.log(`[lobby] Deleting lobby ${code} (host timeout)`);
-              const cleanup = LobbyManager.delete(currentLobby, "Host timed out");
-              deleteLobby(code);
-              handleLobbyResult(server, code, cleanup);
+              terminateLobby(server, code, "Host timed out");
             }
             deletionTimers.delete(code);
           }, 30_000);
@@ -570,5 +513,4 @@ process.on("SIGINT", () => {
 });
 
 (globalThis as any).server = server;
-
 export { server };
