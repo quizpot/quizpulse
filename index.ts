@@ -299,7 +299,7 @@ const server = Bun.serve<WebSocketData>({
       const id = url.searchParams.get("id");
       const code = url.searchParams.get("code");
       const role = url.searchParams.get("role") as "host" | "player" | null;
-      const name = url.searchParams.get("name") || generateName();
+      const rawName = url.searchParams.get("name");
 
       if (!id || !code || !role || (role !== "host" && role !== "player")) {
         return new Response(
@@ -317,15 +317,13 @@ const server = Bun.serve<WebSocketData>({
       }
 
       if (role === "host" && lobby.hostId !== id) {
-        console.warn(`[auth] Unauthorized host connection attempt for lobby ${code}`);
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 403,
           headers: { "Content-Type": "application/json" },
         });
       }
 
-      const upgraded = server.upgrade(req, { data: { id, code, role, name } });
-
+      const upgraded = server.upgrade(req, { data: { id, code, role, name: rawName ?? "" } });
       return upgraded
         ? undefined
         : new Response(JSON.stringify({ error: "Upgrade failed" }), {
@@ -344,7 +342,33 @@ const server = Bun.serve<WebSocketData>({
     data: {} as WebSocketData,
 
     open(ws) {
-      const { id, code, role, name } = ws.data;
+      const { id, code, role } = ws.data;
+      const rawName = ws.data.name; // what was passed at upgrade time
+
+      const lobby = getLobby(code);
+      if (!lobby) {
+        console.error(`[ws] Lobby ${code} disappeared during open handler`);
+        ws.close(1011, "Lobby error");
+        return;
+      }
+
+      let name: string = rawName;
+
+      if (role !== "host") {
+        // Resolve the final name based on lobby settings
+        if (!lobby.settings.customNames) {
+          name = generateName();
+        } else {
+          if (!rawName.trim()) {
+            ws.close(4003, "Name is required");
+            return;
+          }
+          name = rawName.trim();
+        }
+
+        // Patch the name into ws.data so the rest of the handler sees it correctly
+        ws.data.name = name;
+      }
 
       const existing = getClient(id);
       if (existing) {
@@ -367,13 +391,6 @@ const server = Bun.serve<WebSocketData>({
 
       ws.subscribe(code);
       createClient(ws as any, id, code, role);
-
-      const lobby = getLobby(code);
-      if (!lobby) {
-        console.error(`[ws] Lobby ${code} disappeared during open handler`);
-        ws.close(1011, "Lobby error");
-        return;
-      }
 
       const result = LobbyManager.join(lobby, id, name);
       if (result.type === "ERROR") {
