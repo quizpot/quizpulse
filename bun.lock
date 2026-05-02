@@ -5,7 +5,7 @@
     "": {
       "name": "quizpulse",
       "dependencies": {
-        "@quizpot/quizcore": "0.0.41",
+        "@quizpot/quizcore": "0.0.44",
         "@types/pg": "^8.20.0",
         "drizzle-orm": "^0.45.2",
         "pg": "^8.20.0",
@@ -78,7 +78,7 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
 
-    "@quizpot/quizcore": ["@quizpot/quizcore@0.0.41", "", { "dependencies": { "drizzle-orm": "^0.45.2", "pg": "^8.20.0", "uuid": "^13.0.0", "zod": "^4.3.6" } }, "sha512-/B5BOtJAqoFugDSDumhZ6wiK9oDdwRmLS6/KDEabZb7WQ4ACrio/cIZq9H4p2qPtTDwZxbdweYA2wR3Plei9ng=="],
+    "@quizpot/quizcore": ["@quizpot/quizcore@0.0.44", "", { "dependencies": { "drizzle-orm": "^0.45.2", "pg": "^8.20.0", "uuid": "^13.0.0", "zod": "^4.3.6" } }, "sha512-otA9Y0rLh7zPXGUhGyV7R9ujchH4YHL4i5Z9BH0T2+wNlD6SXTWyY5/7qPNSXbNmZpjnNBc02FvkBlXHIhXBqQ=="],
 
     "@types/bun": ["@types/bun@1.3.12", "", { "dependencies": { "bun-types": "1.3.12" } }, "sha512-DBv81elK+/VSwXHDlnH3Qduw+KxkTIWi7TXkAeh24zpi5l0B2kUg9Ga3tb4nJaPcOFswflgi/yAvMVBPrxMB+A=="],
 

@@ -389,12 +389,24 @@ const server = Bun.serve<WebSocketData>({
         console.log(`[ws] Player ${name} (${id}) connected to lobby ${code}`);
       }
 
+      const isExistingPlayer = lobby.players.some(p => p.id === id);
+
+      if (role !== "host" && !isExistingPlayer) {
+        if (!lobby.settings.joinMidGame && lobby.status !== LobbyStatus.waiting) {
+          ws.close(4003, "Lobby is already in progress");
+          return;
+        }
+        if (lobby.settings.playerLimit.enabled && lobby.players.length >= lobby.settings.playerLimit.limit) {
+          ws.close(4003, "Lobby is full");
+          return;
+        }
+      }
+
       ws.subscribe(code);
       createClient(ws as any, id, code, role);
 
       const result = LobbyManager.join(lobby, id, name);
       if (result.type === "ERROR") {
-        console.log(`[ws] Join error for ${id}: ${result.message}`);
         ws.close(4003, result.message);
       } else {
         handleLobbyResult(server, code, result);
