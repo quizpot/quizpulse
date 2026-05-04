@@ -140,15 +140,23 @@ async function handleLobbyResult(
 
       if (lobby) {
         try {
+          const q = (await db.select().from(quiz).where(eq(quiz.id, lobby.quiz.id)))[0];
+
+          if (!q) {
+            console.warn(`[game] Lobby ${code} couldn't find quiz to save results for`);
+            return;
+          }
+
           await db.insert(resultTable).values({
             id: crypto.randomUUID(),
-            quizId: lobby.quiz.id,
+            ownerId: q.ownerId,
             result: {
               quiz: lobby.quiz,
               answers: state.results,
               players: state.players,
             }
           });
+          
           console.log(`[game] Saved results for lobby ${code}`);
         } catch (err) {
           console.error(`[game] Failed to save results for lobby ${code}:`, err);
