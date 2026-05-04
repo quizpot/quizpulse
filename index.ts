@@ -1,4 +1,7 @@
-import { quiz } from "@quizpot/quizcore/db/schema";
+import {
+  quiz,
+  result as resultTable,  // ← alias it
+} from "@quizpot/quizcore/db/schema";
 import { db } from "./db/index.ts";
 import {
   createLobby,
@@ -113,36 +116,51 @@ function terminateLobby(
   console.log(`[game] Lobby ${code} terminated: ${reason}`);
 }
 
-function handleLobbyResult(
+async function handleLobbyResult(
   server: Server<WebSocketData>,
   code: string,
-  result: any
-): { type: "ERROR"; message: string } | void {
-  if (!result) return;
+  outcome: any
+): Promise<{ type: "ERROR"; message: string } | void> {
+  if (!outcome) return;
 
-  if (result instanceof Error) {
-    return { type: "ERROR", message: result.message };
+  if (outcome instanceof Error) {
+    return { type: "ERROR", message: outcome.message };
   }
 
-  if (result.type === "ERROR") {
-    return result as { type: "ERROR"; message: string };
+  if (outcome.type === "ERROR") {
+    return outcome as { type: "ERROR"; message: string };
   }
 
-  const state = result.state || result.nextState;
+  const state = outcome.state || outcome.nextState;
   if (state) {
     updateLobby(code, state);
 
-    // When the game reaches end status, terminate cleanly and stop processing.
-    // Do NOT call LobbyManager.delete() + handleLobbyResult() here — that
-    // pattern is what caused the "Maximum call stack size exceeded" crash
-    // because delete() also produces status:end, causing infinite re-entry.
     if (state.status === LobbyStatus.end) {
+      const lobby = getLobby(code);
+
+      if (lobby) {
+        try {
+          await db.insert(resultTable).values({
+            id: crypto.randomUUID(),
+            quizId: lobby.quiz.id,
+            result: {
+              quiz: lobby.quiz,
+              answers: state.results,
+              players: state.players,
+            }
+          });
+          console.log(`[game] Saved results for lobby ${code}`);
+        } catch (err) {
+          console.error(`[game] Failed to save results for lobby ${code}:`, err);
+        }
+      }
+
       terminateLobby(server, code, "Lobby ended");
       return;
     }
   }
 
-  dispatchEvents(server, code, result.events);
+  dispatchEvents(server, code, outcome.events);
 
   // All-answered early advance.
   const currentLobby = getLobby(code);
@@ -413,7 +431,7 @@ const server = Bun.serve<WebSocketData>({
       }
     },
 
-    message(ws, message) {
+    async message(ws, message) {
       try {
         const { code, id } = ws.data;
 
@@ -471,7 +489,7 @@ const server = Bun.serve<WebSocketData>({
             return;
         }
 
-        const outcome = handleLobbyResult(server, code, result);
+        const outcome = await handleLobbyResult(server, code, result);
         if (outcome?.type === "ERROR") {
           console.log(`[game] Error handling ${payload.event} from ${id}: ${outcome.message}`);
           ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: outcome.message } }));
@@ -480,9 +498,7 @@ const server = Bun.serve<WebSocketData>({
         console.error("[ws] Unexpected error in message handler:\n" + err);
         try {
           ws.send(JSON.stringify({ event: "SERVER_ERROR", payload: { message: "Server error" } }));
-        } catch {
-          // swallow — client is likely gone
-        }
+        } catch {}
       }
     },
 
